@@ -95,7 +95,7 @@ A: That's why we're leaning towards flag day with non-binding miner voting. It's
 
 Q: Would you break SPV clients in a hard-fork?
 
-A: Potentially, if that needs to be done.
+A: Potentially, if that needs to be done
 
 Q: Would you deliberately do it?
 
