@@ -91,11 +91,12 @@ A: That's reasonable. You are going to be rolling out a patch, which says 6 mont
 
 Q: In one of those slides, you said 75% levels, so 750 out of 1000 blocks. That was bip101. What is your optimal choice for that? Is it 75% 80% 90%?
 
+
 A: That's why we're leaning towards flag day with non-binding miner voting. It's to avoid picking a specific number. You want to have a clear majority of hashpower on the fork that users prefer. I don't want to pick a number. I don't have a number. It's just a supermajority of the hashpower. That's step 2. But step 1 is the users agreeing by running the new software.
 
 Q: Would you break SPV clients in a hard-fork?
 
-A: Potentially, if that needs to be done.
+A: Potentially, if that needs to be done
 
 Q: Would you deliberately do it?
 
@@ -103,7 +104,7 @@ A: No. I want to maintain backwards-compatibility if at all possible. Not all wa
 
 Q: Do you think increasing on-chain bandwidth will interfere with the value of bitcoin?
 
-A: It will increase the value of bitcoin. It will signal that we are willing to enhance the system.
+A: It will increase the value of bitcoin. It will signal that we are willing to enhance the system
 
 bip100 <http://gtf.org/garzik/bitcoin/BIP100-blocksizechangeproposal.pdf>
 
