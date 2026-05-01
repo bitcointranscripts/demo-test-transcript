@@ -1,15 +1,9 @@
 name: Review Queue Manager
 
-# Enforces two deadlines:
-#   1. Reviewer made no edits on submission → 2 days to fix, then PR returned to queue
-#   2. Editor left feedback → 2 weeks to respond, then PR returned to queue
-
 on:
-  # Detect when an editor (member/owner) requests changes
   pull_request_review:
     types: [submitted]
 
-  # Daily check for expired deadlines
   schedule:
     - cron: "0 9 * * *"
 
@@ -19,7 +13,6 @@ permissions:
 
 jobs:
 
-  # ── When an editor requests changes, start the 2-week countdown ──────────────
   handle-editor-feedback:
     if: |
       github.event_name == 'pull_request_review' &&
