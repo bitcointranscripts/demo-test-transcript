@@ -1,0 +1,138 @@
+name: Review Queue Manager
+
+# Enforces two deadlines:
+#   1. Reviewer made no edits on submission → 2 days to fix, then PR returned to queue
+#   2. Editor left feedback → 2 weeks to respond, then PR returned to queue
+
+on:
+  # Detect when an editor (member/owner) requests changes
+  pull_request_review:
+    types: [submitted]
+
+  # Daily check for expired deadlines
+  schedule:
+    - cron: "0 9 * * *"
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+
+  # ── When an editor requests changes, start the 2-week countdown ──────────────
+  handle-editor-feedback:
+    if: |
+      github.event_name == 'pull_request_review' &&
+      github.event.review.state == 'changes_requested' &&
+      contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Label PR and post deadline comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr     = context.payload.pull_request;
+            const editor = context.payload.review.user.login;
+
+            const deadline = new Date();
+            deadline.setDate(deadline.getDate() + 14);
+            const deadlineStr = deadline.toISOString().split('T')[0];
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: pr.number,
+              labels: ['editor-feedback-pending'],
+            });
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: pr.number,
+              body: `📋 **Editor feedback received** (from @${editor}).\n\n` +
+                    `@${pr.user.login}, please address the feedback and push edits by **${deadlineStr}** (2 weeks).\n` +
+                    `If no changes are made by then, this PR will be returned to the review queue.`,
+            });
+
+
+  # ── Daily check: enforce the 2-day and 2-week deadlines ──────────────────────
+  check-deadlines:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close PRs that missed their deadline
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const now = Date.now();
+            const TWO_DAYS    = 2  * 24 * 60 * 60 * 1000;
+            const TWO_WEEKS   = 14 * 24 * 60 * 60 * 1000;
+
+            async function getLabeledAt(prNumber, labelName) {
+              const { data: events } = await github.rest.issues.listEvents({
+                owner: context.repo.owner,
+                repo:  context.repo.repo,
+                issue_number: prNumber,
+                per_page: 100,
+              });
+              // Return the timestamp of the most recent time this label was added
+              const match = events.reverse().find(e => e.event === 'labeled' && e.label.name === labelName);
+              return match ? new Date(match.created_at).getTime() : null;
+            }
+
+            async function returnToQueue(prNumber, reason) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo:  context.repo.repo,
+                issue_number: prNumber,
+                body: `⏰ **Returned to queue.**\n\n${reason}\n\nFeel free to reopen when you're ready.`,
+              });
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo:  context.repo.repo,
+                pull_number: prNumber,
+                state: 'closed',
+              });
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo:  context.repo.repo,
+                issue_number: prNumber,
+                labels: ['returned-to-queue'],
+              }).catch(() => {});
+            }
+
+            // ── Check: no edits within 2 days ──
+            const { data: noEditPRs } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              labels: 'needs-reviewer-edits',
+              state:  'open',
+            });
+
+            for (const pr of noEditPRs) {
+              const labeledAt = await getLabeledAt(pr.number, 'needs-reviewer-edits');
+              if (labeledAt && now - labeledAt >= TWO_DAYS) {
+                await returnToQueue(
+                  pr.number,
+                  'No edits were made to the transcript body within 2 days of the warning.'
+                );
+              }
+            }
+
+            // ── Check: no response to editor feedback within 2 weeks ──
+            const { data: feedbackPRs } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              labels: 'editor-feedback-pending',
+              state:  'open',
+            });
+
+            for (const pr of feedbackPRs) {
+              const labeledAt = await getLabeledAt(pr.number, 'editor-feedback-pending');
+              if (labeledAt && now - labeledAt >= TWO_WEEKS) {
+                await returnToQueue(
+                  pr.number,
+                  'No edits were made in response to editor feedback within 2 weeks.'
+                );
+              }
+            }

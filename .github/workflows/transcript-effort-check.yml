@@ -1,0 +1,162 @@
+name: Transcript Review Effort Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "**/*.md"
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  effort-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch base branch
+        run: git fetch origin ${{ github.base_ref }}
+
+      - name: Find changed transcript files
+        id: files
+        run: |
+          git diff --name-only origin/${{ github.base_ref }}...HEAD -- '*.md' \
+            | grep -v '_index' \
+            | grep -v '^\.github' \
+            > changed_files.txt
+          cat changed_files.txt
+
+      - name: Calculate word-level edits for each file
+        run: |
+          python3 << 'EOF'
+          import subprocess, json, difflib, os
+
+          def get_body(text):
+              """Return the text after the frontmatter (after the second ---)."""
+              parts = text.split('---', 2)
+              return parts[2].strip() if len(parts) == 3 else text.strip()
+
+          results = []
+
+          with open('changed_files.txt') as f:
+              files = [line.strip() for line in f if line.strip()]
+
+          for path in files:
+              if not os.path.exists(path):
+                  continue
+
+              current = open(path).read()
+
+              base = subprocess.run(
+                  ['git', 'show', f'origin/${{ github.base_ref }}:{path}'],
+                  capture_output=True, text=True
+              )
+
+              if base.returncode != 0:
+                  results.append({'file': path, 'is_new': True})
+                  continue
+
+              original_body = get_body(base.stdout)
+              current_body  = get_body(current)
+
+              is_ai_generated = '--needs-review' in base.stdout
+              body_unchanged  = original_body == current_body
+
+              orig_words = original_body.split()
+              curr_words = current_body.split()
+
+              matcher = difflib.SequenceMatcher(None, orig_words, curr_words)
+              added = removed = 0
+              for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+                  if tag in ('insert', 'replace'): added   += j2 - j1
+                  if tag in ('delete', 'replace'): removed += i2 - i1
+
+              results.append({
+                  'file':            path,
+                  'is_new':          False,
+                  'is_ai_generated': is_ai_generated,
+                  'no_edits':        is_ai_generated and body_unchanged,
+                  'original_words':  len(orig_words),
+                  'words_added':     added,
+                  'words_removed':   removed,
+              })
+
+          json.dump(results, open('effort_results.json', 'w'), indent=2)
+          EOF
+
+      - name: Post effort report as PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const results = JSON.parse(fs.readFileSync('effort_results.json', 'utf8'));
+            const noEditFiles = results.filter(r => r.no_edits).map(r => r.file);
+
+            // Build the comment
+            let body = `## Transcript Review Effort Report\n\n`;
+
+            for (const r of results) {
+              if (r.is_new) {
+                body += `- ✅ \`${r.file}\` — new file\n`;
+                continue;
+              }
+              const flag = r.no_edits ? '⚠️' : '✅';
+              body += `### ${flag} \`${r.file}\`\n`;
+              if (r.is_ai_generated) body += `- Source: AI-generated (\`tstbtc --needs-review\`)\n`;
+              body += `- Original word count: **${r.original_words}**\n`;
+              body += `- Words added: **+${r.words_added}**\n`;
+              body += `- Words removed: **-${r.words_removed}**\n`;
+              if (r.no_edits) body += `- ⚠️ No edits detected in transcript body\n`;
+              body += '\n';
+            }
+
+            if (noEditFiles.length > 0) {
+              body += `---\n`;
+              body += `> ⚠️ **No edits were found in the transcript body.**\n`;
+              body += `> Please edit the content within **2 days** or this PR will be returned to the review queue.\n`;
+            }
+
+            // Delete any previous effort report comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            for (const c of comments) {
+              if (c.body.startsWith('## Transcript Review Effort Report')) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: c.id,
+                });
+              }
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+            // Label the PR if no edits were found
+            if (noEditFiles.length > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: ['needs-reviewer-edits'],
+              }).catch(() => {});
+            } else {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                name: 'needs-reviewer-edits',
+              }).catch(() => {});
+            }
