@@ -47,6 +47,10 @@ jobs:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
           path: transcripts
+          # Fork PR code only runs here after the `external-fork-preview` environment's
+          # required reviewers approve the job, so the checkout is already gated.
+          # See https://gh.io/securely-using-pull_request_target
+          allow-unsafe-pr-checkout: true
 
       - name: Setup Checkout for Bitcoin Transcripts (Comment Trigger)
         if: github.event_name == 'issue_comment'
