@@ -1,4 +1,4 @@
-name: Build Transcripts Preview Site
+name: Build Transcripts Preview Site Test
 permissions:
   contents: read
   pull-requests: write
