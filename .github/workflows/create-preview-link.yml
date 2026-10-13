@@ -95,7 +95,6 @@ jobs:
         
         run: |
           npm run fetch-topics
-          npm run fetch-reviewers
           npx next build
 
       - name: Install Vercel CLI
